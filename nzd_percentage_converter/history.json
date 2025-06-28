@@ -1,0 +1,50 @@
+[
+  {
+    "nzd_input": 75095.09,
+    "percentage": 42.16,
+    "nzd_result": 31660.089943999996,
+    "usd_result": 19175.883277,
+    "usd_rate": 0.60568,
+    "timestamp": "2025-06-28T12:13:12.573310"
+  },
+  {
+    "nzd_input": 74800.09,
+    "percentage": 42.16,
+    "nzd_result": 31535.717943999996,
+    "usd_result": 19100.553644,
+    "usd_rate": 0.60568,
+    "timestamp": "2025-06-28T12:13:25.509250"
+  },
+  {
+    "nzd_input": 74000.0,
+    "percentage": 42.16,
+    "nzd_result": 31198.399999999998,
+    "usd_result": 18892.19112,
+    "usd_rate": 0.60555,
+    "timestamp": "2025-06-28T12:27:30.853651"
+  },
+  {
+    "nzd_input": 75955.0,
+    "percentage": 42.16,
+    "nzd_result": 32022.627999999997,
+    "usd_result": 19391.302385,
+    "usd_rate": 0.60555,
+    "timestamp": "2025-06-28T12:27:39.760807"
+  },
+  {
+    "nzd_input": 78000.0,
+    "percentage": 42.16,
+    "nzd_result": 32884.799999999996,
+    "usd_result": 19913.39064,
+    "usd_rate": 0.60555,
+    "timestamp": "2025-06-28T12:27:46.466819"
+  },
+  {
+    "nzd_input": 75000.0,
+    "percentage": 42.16,
+    "nzd_result": 31619.999999999996,
+    "usd_result": 19147.491,
+    "usd_rate": 0.60555,
+    "timestamp": "2025-06-28T12:38:08.677380"
+  }
+]
