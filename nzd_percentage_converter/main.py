@@ -2,11 +2,12 @@
 """
 Author: AI Assistant
 Last updated: 2025-06-27
-Version: 0.1.0 (Stable Release) - Adding History Logging Feature with Comparison
+Version: 0.3.0 (Stable Release) - Google Sheets Integration
 Purpose: Main application file for NZD Percentage Converter GUI tool.
          Features: NZD percentage calculation, live USD conversion, 
-         percentage persistence, error handling, history logging, and comparison.
-Dependencies: tkinter (standard), json (standard), requests (external)
+         percentage persistence, error handling, history logging, comparison,
+         and Google Sheets cloud storage integration.
+Dependencies: tkinter (standard), json (standard), requests (external), google-api-python-client (external)
 """
 
 import tkinter as tk
@@ -14,22 +15,50 @@ from tkinter import ttk, messagebox
 import requests
 import json
 import os
+import sys
 from datetime import datetime
+from google_sheets import GoogleSheetsManager
 
 access_key = "da30bcd9f07ffd758fe1d367c87f036a"
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
-HISTORY_FILE = os.path.join(os.path.dirname(__file__), "history.json")
+
+# Handle file paths for both development and executable environments
+def get_app_directory():
+    """Get the directory where the application is running"""
+    if getattr(sys, 'frozen', False):
+        # Running as executable
+        return os.path.dirname(sys.executable)
+    else:
+        # Running in development
+        return os.path.dirname(os.path.abspath(__file__))
+
+# Set file paths
+APP_DIR = get_app_directory()
+HISTORY_FILE = os.path.join(APP_DIR, "history.json")
+
+# Ensure app directory exists
+os.makedirs(APP_DIR, exist_ok=True)
+
+# Debug information (can be removed in production)
+print(f"App Directory: {APP_DIR}")
+print(f"History File: {HISTORY_FILE}")
 
 class NZDPercentageConverterApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("NZD Percentage Converter")
-        self.geometry("400x300")  # Increased height for save button
+        self.geometry("500x450")  # Increased size for better field display and Google Sheets buttons
         self.resizable(False, False)
         self.configure(bg="#f9f9f9")
+        
+        # Initialize Google Sheets manager first
+        self.sheets_manager = GoogleSheetsManager(APP_DIR)
+        
         self._build_ui()
         self._load_last_percentage()
         self.current_calculation = None  # Store current calculation for saving
+        
+        # Auto-check Google Sheets setup on startup
+        self._auto_check_sheets_setup()
 
     def _build_ui(self):
         # Center frame
@@ -48,8 +77,8 @@ class NZDPercentageConverterApp(tk.Tk):
         percent_entry = ttk.Entry(frame, textvariable=self.percent_var, width=20)
         percent_entry.grid(row=1, column=1, pady=(0, 10))
 
-        # Calculate button
-        calc_btn = ttk.Button(frame, text="Calculate", command=self.on_calculate)
+        # Calculate & Save button
+        calc_btn = ttk.Button(frame, text="Calculate & Save", command=self.on_calculate)
         calc_btn.grid(row=2, column=0, columnspan=2, pady=(10, 10))
 
         # Output labels
@@ -58,37 +87,44 @@ class NZDPercentageConverterApp(tk.Tk):
         self.usd_result_label = ttk.Label(frame, text="USD Result: -")
         self.usd_result_label.grid(row=4, column=0, columnspan=2, pady=(5, 0))
 
-        # Save to History button (initially disabled)
-        self.save_btn = ttk.Button(frame, text="Save to History", command=self.on_save_to_history, state="disabled")
-        self.save_btn.grid(row=5, column=0, columnspan=2, pady=(10, 0))
+
 
         # View History button
         history_btn = ttk.Button(frame, text="View History", command=self.on_view_history)
         history_btn.grid(row=6, column=0, columnspan=2, pady=(5, 0))
 
+        # Google Sheets section
+        sheets_frame = ttk.LabelFrame(frame, text="Google Sheets", padding=10)
+        sheets_frame.grid(row=7, column=0, columnspan=2, pady=(10, 0), sticky="ew")
+
+        # Setup Google Sheets button
+        self.setup_sheets_btn = ttk.Button(sheets_frame, text="Setup Google Sheets", command=self.on_setup_sheets)
+        self.setup_sheets_btn.pack(fill="x", pady=(0, 5))
+
+        # Open Sheets button (initially disabled)
+        self.open_sheets_btn = ttk.Button(sheets_frame, text="Open Google Sheets", command=self.on_open_sheets, state="disabled")
+        self.open_sheets_btn.pack(fill="x")
+
+        # Update Google Sheets button states
+        self._update_sheets_buttons()
+
     def _load_last_percentage(self):
         try:
-            if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    last_percent = data.get("last_percentage", "")
-                    # Only set if it's a valid number (not None, not empty string)
-                    if isinstance(last_percent, (int, float, str)) and str(last_percent).strip() != "":
-                        self.percent_var.set(str(last_percent))
-                    else:
-                        self.percent_var.set("")
+            history = self._load_history()
+            if history:
+                # Get the latest entry (most recent) and extract its percentage
+                latest_entry = history[-1]
+                last_percent = latest_entry.get("percentage", 0)
+                # Set the percentage value (default to 0 if not found)
+                self.percent_var.set(str(last_percent))
             else:
-                self.percent_var.set("")
+                # No history exists, set to 0 for first execution
+                self.percent_var.set("0")
         except Exception:
-            # On any error, just leave the field empty
-            self.percent_var.set("")
+            # On any error, set to 0
+            self.percent_var.set("0")
 
-    def _save_last_percentage(self, percent_value):
-        try:
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump({"last_percentage": percent_value}, f)
-        except Exception as e:
-            messagebox.showwarning("Config Error", f"Could not save last percentage.\n{e}")
+
 
     def _load_history(self):
         """Load calculation history from file"""
@@ -120,13 +156,9 @@ class NZDPercentageConverterApp(tk.Tk):
             messagebox.showerror("Input Error", "Please enter valid, non-negative numbers for NZD and Percentage.")
             self.nzd_result_label.config(text="NZD Result: -")
             self.usd_result_label.config(text="USD Result: -")
-            self.save_btn.config(state="disabled")
             self.current_calculation = None
             return
 
-        # Save last-used percentage
-        self._save_last_percentage(percent_value)
-        
         # Calculate percentage
         nzd_result = nzd_value * (percent_value / 100)
         self.nzd_result_label.config(text=f"NZD Result: {nzd_result:.2f}")
@@ -169,27 +201,179 @@ class NZDPercentageConverterApp(tk.Tk):
             self.usd_result_label.config(text="USD Result: Error")
             messagebox.showerror("API Error", f"Could not fetch USD rate.\n{e}")
         
-        # Enable save button after successful calculation
-        self.save_btn.config(state="normal")
+        # Update Google Sheets buttons
+        self._update_sheets_buttons()
+        
+        # Automatically save the calculation
+        self._auto_save_calculation()
 
-    def on_save_to_history(self):
-        """Save current calculation to history"""
+    def _auto_save_calculation(self):
+        """Automatically save the current calculation to local history and Google Sheets"""
         if not self.current_calculation:
-            messagebox.showwarning("No Calculation", "Please calculate a value first.")
             return
         
+        # Save to local history first
+        local_success = False
         try:
             history = self._load_history()
             history.append(self.current_calculation)
             self._save_history(history)
-            messagebox.showinfo("Saved", "Calculation saved to history!")
-            self.save_btn.config(state="disabled")  # Disable after saving
+            local_success = True
         except Exception as e:
-            messagebox.showerror("Save Error", f"Could not save to history.\n{e}")
+            messagebox.showerror("Local Save Error", f"Could not save to local history.\n{e}")
+            return
+        
+        # Try to save to Google Sheets if configured
+        sheets_success = False
+        sheets_message = ""
+        if self.sheets_manager.is_configured() and self.sheets_manager.check_spreadsheet_access():
+            try:
+                # Calculate percentage change by comparing with previous entry in Google Sheets
+                usd_change_percent = ''
+                current_usd = self.current_calculation.get('usd_result')
+                
+                if current_usd is not None:
+                    # Get the last entry from Google Sheets to calculate percentage change
+                    previous_usd = self.sheets_manager.get_last_usd_result()
+                    if previous_usd is not None:
+                        change_percent = self._calculate_percentage_change(current_usd, previous_usd)
+                        if change_percent is not None:
+                            # Store as raw float number for Google Sheets (not string)
+                            usd_change_percent = change_percent
+                        else:
+                            usd_change_percent = "N/A"
+                    else:
+                        usd_change_percent = "N/A"
+                
+                # Prepare data for upload
+                upload_data = {
+                    'timestamp': self.current_calculation['timestamp'],
+                    'nzd_input': self.current_calculation['nzd_input'],
+                    'percentage': self.current_calculation['percentage'],
+                    'nzd_result': self.current_calculation['nzd_result'],
+                    'usd_result': self.current_calculation.get('usd_result', ''),
+                    'usd_rate': self.current_calculation.get('usd_rate', ''),
+                    'usd_change_percent': usd_change_percent,
+                    'notes': ''
+                }
+                
+                success, message = self.sheets_manager.upload_calculation(upload_data)
+                if success:
+                    sheets_success = True
+                    sheets_message = f"\nGoogle Sheets: {message}"
+                else:
+                    sheets_message = f"\nGoogle Sheets: {message}"
+            except Exception as e:
+                sheets_message = f"\nGoogle Sheets: Error - {e}"
+        else:
+            sheets_message = "\nGoogle Sheets: Not configured"
+        
+        # Show appropriate success message
+        if local_success and sheets_success:
+            messagebox.showinfo("Saved", f"Calculation saved to history and Google Sheets!{sheets_message}")
+        elif local_success:
+            messagebox.showinfo("Saved", f"Calculation saved to local history.{sheets_message}")
 
     def on_view_history(self):
         """Open history viewer window"""
         HistoryViewer(self)
+
+    def _auto_check_sheets_setup(self):
+        """Automatically check Google Sheets setup on app startup"""
+        try:
+            # Check if credentials file exists
+            if not os.path.exists(self.sheets_manager.credentials_file):
+                return  # No credentials, user needs to set up manually
+            
+            # Check if we have a saved spreadsheet ID
+            if not self.sheets_manager.spreadsheet_id:
+                return  # No spreadsheet ID saved, user needs to set up manually
+            
+            # Try to authenticate silently
+            success, message = self.sheets_manager.authenticate(silent=True)
+            if not success:
+                return  # Authentication failed, user needs to set up manually
+            
+            # Check if the spreadsheet is accessible
+            if not self.sheets_manager.check_spreadsheet_access():
+                return  # Spreadsheet not accessible, user needs to reconnect
+            
+            # Everything is working, update button states
+            self._update_sheets_buttons()
+            
+        except Exception as e:
+            print(f"Auto-check Google Sheets setup failed: {e}")
+            # Continue without Google Sheets if auto-check fails
+
+    def _calculate_percentage_change(self, current_usd, previous_usd):
+        """Calculate percentage change between two USD values"""
+        if previous_usd is None or previous_usd == 0:
+            return None
+        return ((current_usd - previous_usd) / previous_usd) * 100
+
+    def _update_sheets_buttons(self):
+        """Update the state of Google Sheets buttons based on configuration and current calculation"""
+        if self.sheets_manager.is_configured():
+            if self.sheets_manager.check_spreadsheet_access():
+                self.setup_sheets_btn.config(text="Reconfigure Google Sheets")
+            else:
+                self.setup_sheets_btn.config(text="Reconnect Google Sheets")
+            self.open_sheets_btn.config(state="normal")
+        else:
+            self.setup_sheets_btn.config(text="Setup Google Sheets")
+            self.open_sheets_btn.config(state="disabled")
+
+    def on_setup_sheets(self):
+        """Setup Google Sheets integration"""
+        try:
+            # Check if credentials file exists
+            if not os.path.exists(self.sheets_manager.credentials_file):
+                messagebox.showinfo("Setup Required", 
+                    "To use Google Sheets, you need to:\n\n"
+                    "1. Go to Google Cloud Console (https://console.cloud.google.com)\n"
+                    "2. Create a new project or select existing one\n"
+                    "3. Enable Google Sheets API\n"
+                    "4. Create credentials (OAuth 2.0 Client ID)\n"
+                    "5. Download the credentials.json file\n"
+                    "6. Place it in the same folder as this application\n\n"
+                    "Would you like to open the Google Cloud Console?")
+                
+                if messagebox.askyesno("Open Console", "Open Google Cloud Console?"):
+                    import webbrowser
+                    webbrowser.open("https://console.cloud.google.com")
+                return
+            
+            # Authenticate
+            success, message = self.sheets_manager.authenticate()
+            if not success:
+                messagebox.showerror("Authentication Failed", message)
+                return
+            
+            # Create spreadsheet or use existing one
+            success, message = self.sheets_manager.create_spreadsheet()
+            if success:
+                if "existing spreadsheet" in message.lower():
+                    messagebox.showinfo("Success", f"Google Sheets connected!\n{message}")
+                else:
+                    messagebox.showinfo("Success", f"Google Sheets setup complete!\n{message}")
+                self._update_sheets_buttons()
+            else:
+                messagebox.showerror("Setup Failed", message)
+                
+        except Exception as e:
+            messagebox.showerror("Setup Error", f"An error occurred during setup: {e}")
+
+    def on_open_sheets(self):
+        """Open the Google Sheets in browser"""
+        url = self.sheets_manager.get_spreadsheet_url()
+        if url:
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not open browser: {e}")
+        else:
+            messagebox.showwarning("No Spreadsheet", "No spreadsheet configured.")
 
 class HistoryViewer(tk.Toplevel):
     def __init__(self, parent):
